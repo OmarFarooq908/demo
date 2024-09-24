@@ -6,86 +6,91 @@ from datetime import datetime
 import pytz  # Import pytz for timezone handling
 from dotenv import load_dotenv
 import os
+from crewai_tools import tool  # type: ignore # Replace with your actual tool library
 
+# Load environment variables from .env file
 load_dotenv()
+
 # Gmail IMAP server settings
 IMAP_SERVER = os.getenv('IMAP_SERVER')
 EMAIL_ACCOUNT = os.getenv('EMAIL_ACCOUNT')
 APP_PASSWORD = os.getenv('APP_PASSWORD')
 
-# List to store found email details
-found_emails = []
-
 def extract_email_body(msg):
     """Extract the plain text body of the email."""
-    # If the email is multipart, we need to get the payload
     if msg.is_multipart():
         for part in msg.walk():
-            # If part is text/plain, return its content
             if part.get_content_type() == "text/plain":
                 return part.get_payload(decode=True).decode(part.get_content_charset() or 'utf-8')
     else:
-        # If it's a single part, return its content directly
         return msg.get_payload(decode=True).decode(msg.get_content_charset() or 'utf-8')
     return None  # Return None if no text/plain part found
 
-def check_sent_emails(start_time):
+@tool  # Decorator to expose this function as a tool
+def fetch_email_with_subject(subject_to_find="Network Upgrade"):
+    """
+    Function to check for the first email with a specific subject in the Gmail 'Sent Mail' folder.
+    Returns the email details as a string and stops monitoring once found.
+    """
     # Connect to the IMAP server
     mail = imaplib.IMAP4_SSL(IMAP_SERVER)
     mail.login(EMAIL_ACCOUNT, APP_PASSWORD)
-    
-    # Select the "Sent" folder
-    mail.select('"[Gmail]/Sent Mail"')
 
-    # Search for all emails in the Sent folder
-    date_str = start_time.strftime("%d-%b-%Y")
-    result, data = mail.search(None, f'SINCE "{date_str}"')
+    try:
+        # Select the "Sent" folder
+        mail.select('"[Gmail]/Sent Mail"')
 
-    # Get the list of email IDs
-    email_ids = data[0].split()
+        # Get the current time
+        start_time = datetime.now(pytz.UTC)
 
-    # Loop through each email ID
-    for email_id in email_ids:
-        result, msg_data = mail.fetch(email_id, '(RFC822)')
-        msg = email.message_from_bytes(msg_data[0][1])
-        
-        # Get the email sent time
-        sent_time = email.utils.parsedate_to_datetime(msg['Date'])
+        # Search for all emails since the script start time
+        date_str = start_time.strftime("%d-%b-%Y")
+        result, data = mail.search(None, f'SINCE "{date_str}"')
 
-        # Ensure sent_time is timezone-aware
-        if sent_time.tzinfo is None:
-            sent_time = sent_time.replace(tzinfo=pytz.UTC)
+        # Get the list of email IDs
+        email_ids = data[0].split()
 
-        # Check if the email was sent after the script started
-        if sent_time > start_time:
-            # Decode the email subject
-            subject, encoding = decode_header(msg['Subject'])[0]
-            if isinstance(subject, bytes):
-                subject = subject.decode(encoding if encoding else 'utf-8')
+        # Loop through each email ID
+        for email_id in email_ids:
+            result, msg_data = mail.fetch(email_id, '(RFC822)')
+            msg = email.message_from_bytes(msg_data[0][1])
+            
+            # Get the email sent time
+            sent_time = email.utils.parsedate_to_datetime(msg['Date'])
 
-            # Check if the subject matches "Network Upgrade"
-            if subject == "Network Upgrade":
-                # Prepare email details
-                email_details = {
-                    'from': msg['From'],
-                    'subject': subject,
-                    'date': sent_time,
-                    'body': extract_email_body(msg)  # Extract the email body
-                }
-                
-                # Check if this email is already in the found_emails list
-                if email_details not in found_emails:
-                    found_emails.append(email_details)  # Store unique email details
-                    print(f"Found email with subject '{subject}' from {msg['From']} on {sent_time}")
-                    print(f"Body: {email_details['body']}")  # Print the email body
+            # Ensure sent_time is timezone-aware
+            if sent_time.tzinfo is None:
+                sent_time = sent_time.replace(tzinfo=pytz.UTC)
 
-    # Logout from the server
-    mail.logout()
+            # Check if the email was sent after the script started
+            if sent_time > start_time:
+                # Decode the email subject
+                subject, encoding = decode_header(msg['Subject'])[0]
+                if isinstance(subject, bytes):
+                    subject = subject.decode(encoding if encoding else 'utf-8')
 
-# Get the start time of the script
-start_time = datetime.now(pytz.UTC)  # Make start_time timezone-aware
+                # Check if the subject matches the desired one
+                if subject == subject_to_find:
+                    # Extract the email body
+                    body = extract_email_body(msg)
 
-# Run the script in a loop to monitor
-while True:
-    check_sent_emails(start_time)
-    time.sleep(60)  # Check every minute
+                    # Prepare the email details string
+                    email_details = (
+                        f"Subject: {subject}\n"
+                        f"From: {msg['From']}\n"
+                        f"Date: {sent_time}\n"
+                        f"Body:\n{body}"
+                    )
+
+                    # Return the email details and stop monitoring
+                    return email_details
+
+        # If no email is found after looping through
+        return "No email with the specified subject found."
+
+    finally:
+        # Logout from the server
+        mail.logout()
+
+# Example usage of the tool:
+# If this tool is called, it will check the 'Sent Mail' folder for an email with the subject "Network Upgrade"
