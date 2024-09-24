@@ -1,0 +1,4 @@
+imaplib2
+openpyxl
+pytz
+python-dotenv
