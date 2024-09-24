@@ -6,7 +6,6 @@ from datetime import datetime
 import pytz  # Import pytz for timezone handling
 from dotenv import load_dotenv
 import os
-from crewai_tools import tool  # type: ignore # Replace with your actual tool library
 
 # Load environment variables from .env file
 load_dotenv()
@@ -26,71 +25,80 @@ def extract_email_body(msg):
         return msg.get_payload(decode=True).decode(msg.get_content_charset() or 'utf-8')
     return None  # Return None if no text/plain part found
 
-@tool  # Decorator to expose this function as a tool
-def fetch_email_with_subject(subject_to_find="Network Upgrade"):
+def save_email_to_file(email_details, filename="emails.txt"):
+    """Save the email details to a file."""
+    with open(filename, 'a') as file:
+        file.write(email_details + "\n\n")
+    print(f"Email saved to {filename}")
+
+def fetch_last_email_with_subjects(subjects_to_find):
     """
-    Function to check for the first email with a specific subject in the Gmail 'Sent Mail' folder.
-    Returns the email details as a string and stops monitoring once found.
+    Function to continuously check the last sent email for specific subjects in the Gmail 'Sent Mail' folder.
+    Saves the email details to a file if the subject matches.
     """
     # Connect to the IMAP server
     mail = imaplib.IMAP4_SSL(IMAP_SERVER)
     mail.login(EMAIL_ACCOUNT, APP_PASSWORD)
 
+    last_checked_email_id = None  # Store the last checked email ID to avoid repeated processing
+
     try:
         # Select the "Sent" folder
         mail.select('"[Gmail]/Sent Mail"')
 
-        # Get the current time
-        start_time = datetime.now(pytz.UTC)
+        # Keep checking for new emails
+        while True:
+            # Search for all email IDs in the Sent folder
+            result, data = mail.search(None, "ALL")
 
-        # Search for all emails since the script start time
-        date_str = start_time.strftime("%d-%b-%Y")
-        result, data = mail.search(None, f'SINCE "{date_str}"')
+            # Get the list of email IDs
+            email_ids = data[0].split()
+            if email_ids:
+                # Get the last (most recent) email ID
+                latest_email_id = email_ids[-1]
+                print(latest_email_id)
+                # Check if it's a new email (not the same as the last checked)
+                if latest_email_id != last_checked_email_id:
+                    last_checked_email_id = latest_email_id
 
-        # Get the list of email IDs
-        email_ids = data[0].split()
+                    # Fetch the latest email
+                    result, msg_data = mail.fetch(latest_email_id, '(RFC822)')
+                    msg = email.message_from_bytes(msg_data[0][1])
 
-        # Loop through each email ID
-        for email_id in email_ids:
-            result, msg_data = mail.fetch(email_id, '(RFC822)')
-            msg = email.message_from_bytes(msg_data[0][1])
-            
-            # Get the email sent time
-            sent_time = email.utils.parsedate_to_datetime(msg['Date'])
+                    # Decode the email subject
+                    subject, encoding = decode_header(msg['Subject'])[0]
+                    if isinstance(subject, bytes):
+                        subject = subject.decode(encoding if encoding else 'utf-8')
 
-            # Ensure sent_time is timezone-aware
-            if sent_time.tzinfo is None:
-                sent_time = sent_time.replace(tzinfo=pytz.UTC)
+                    # Check if the subject matches any in the desired list
+                    if any(keyword in subject for keyword in subjects_to_find):
+                        # Extract the email body
+                        body = extract_email_body(msg)
 
-            # Check if the email was sent after the script started
-            if sent_time > start_time:
-                # Decode the email subject
-                subject, encoding = decode_header(msg['Subject'])[0]
-                if isinstance(subject, bytes):
-                    subject = subject.decode(encoding if encoding else 'utf-8')
+                        # Get the email sent time
+                        sent_time = email.utils.parsedate_to_datetime(msg['Date'])
 
-                # Check if the subject matches the desired one
-                if subject == subject_to_find:
-                    # Extract the email body
-                    body = extract_email_body(msg)
+                        # Prepare the email details string
+                        email_details = (
+                            f"Subject: {subject}\n"
+                            f"From: {msg['From']}\n"
+                            f"Date: {sent_time}\n"
+                            f"Body:\n{body}"
+                        )
 
-                    # Prepare the email details string
-                    email_details = (
-                        f"Subject: {subject}\n"
-                        f"From: {msg['From']}\n"
-                        f"Date: {sent_time}\n"
-                        f"Body:\n{body}"
-                    )
+                        # Save the email details to a file
+                        save_email_to_file(email_details)
+                    else:
+                        print(f"No matching subject found in the last sent email: {subject}")
 
-                    # Return the email details and stop monitoring
-                    return email_details
-
-        # If no email is found after looping through
-        return "No email with the specified subject found."
+            # Wait for a minute before checking again
+            time.sleep(10)
 
     finally:
         # Logout from the server
         mail.logout()
 
-# Example usage of the tool:
-# If this tool is called, it will check the 'Sent Mail' folder for an email with the subject "Network Upgrade"
+# Example usage:
+# Continuously check for emails with "Network Upgrade", "Change IDs", or "Device Status"
+subjects_to_monitor = ["Network Upgrade", "Change IDs", "Device Status"]
+fetch_last_email_with_subjects(subjects_to_monitor)

@@ -1,12 +1,3 @@
-def dummy_function(body):
-    # This is a placeholder for actual data extraction logic
-    # Simulate extraction of data
-    return {
-        "network upgrades": "Sample upgrade details",
-        "change IDs": "Sample change ID",
-        "device statuses": "Sample device status",
-    }
-
 # Example: Creating an agent with all attributes
 from crewai import Agent, LLM, Task, Crew # type: ignore
 from email_monitor import fetch_email_with_subject
@@ -16,13 +7,14 @@ import os
 load_dotenv()
 model_name = os.getenv('OPENAI_MODEL_NAME')
 api_key = os.getenv('OPENAI_API_KEY')
+
 llm = LLM(
     model=model_name,
     api_key=api_key
 )
 network_engineer_agent = Agent(
   role='Senior Network Engineer',
-  goal='Extract actionable insights',
+  goal='Extract critical network information from emails having subject \'Network Upgrade\', \'Change ID\' or \'Device Status\'',
   backstory="""You regularly extract text from emails with critical information like network upgrades, change IDs, and device statuses.""",
   tools=[fetch_email_with_subject],  # Optional, defaults to an empty list
   llm=llm,  # Optional
